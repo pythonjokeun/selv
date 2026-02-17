@@ -6,6 +6,16 @@ readme = "README.md"
 requires-python = ">=3.8"
 dependencies = []
 
+[tool.ruff]
+line-length = 88
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "C901"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 8
+
 [dependency-groups]
 dev = [
     "pytest>=8.3.5",

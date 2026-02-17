@@ -278,7 +278,9 @@ class _ChangeRecord:
         elif self.new_value is None:
             return f"{attr_str}: {self._format_value(self.old_value)} -> deleted"
         else:
-            return f"{attr_str}: {self._format_value(self.old_value)} -> {self._format_value(self.new_value)}"
+            old_val = self._format_value(self.old_value)
+            new_val = self._format_value(self.new_value)
+            return f"{attr_str}: {old_val} -> {new_val}"
 
     def _format_value(self, value: Any) -> str:
         """Format value for display."""
@@ -289,30 +291,259 @@ class _ChangeRecord:
         elif isinstance(value, (int, float, bool)):
             return str(value)
         elif isinstance(value, dict):
-            items = []
-            for k, v in value.items():
-                if isinstance(k, str):
-                    items.append(f"'{k}': {self._format_value(v)}")
-                else:
-                    items.append(f"{k}: {self._format_value(v)}")
-            return "{" + ", ".join(items) + "}"
+            return self._format_dict(value)
         elif isinstance(value, list):
-            items = [self._format_value(item) for item in value]
-            return "[" + ", ".join(items) + "]"
+            return self._format_list(value)
         elif isinstance(value, tuple):
-            items = [self._format_value(item) for item in value]
-            return "(" + ", ".join(items) + ")"
+            return self._format_tuple(value)
         elif isinstance(value, set):
-            try:
-                # Try to sort for consistent output
-                sorted_items = sorted(value)
-            except TypeError:
-                # If sorting fails (mixed types), use natural order
-                sorted_items = list(value)
-            items = [self._format_value(item) for item in sorted_items]
-            return "{" + ", ".join(items) + "}"
+            return self._format_set(value)
         else:
             return f"{type(value).__name__} instance"
+
+    def _format_dict(self, value: dict) -> str:
+        """Format dictionary value."""
+        items = []
+        for k, v in value.items():
+            if isinstance(k, str):
+                items.append(f"'{k}': {self._format_value(v)}")
+            else:
+                items.append(f"{k}: {self._format_value(v)}")
+        return "{" + ", ".join(items) + "}"
+
+    def _format_list(self, value: list) -> str:
+        """Format list value."""
+        items = [self._format_value(item) for item in value]
+        return "[" + ", ".join(items) + "]"
+
+    def _format_tuple(self, value: tuple) -> str:
+        """Format tuple value."""
+        items = [self._format_value(item) for item in value]
+        return "(" + ", ".join(items) + ")"
+
+    def _format_set(self, value: set) -> str:
+        """Format set value."""
+        try:
+            # Try to sort for consistent output
+            sorted_items = sorted(value)
+        except TypeError:
+            # If sorting fails (mixed types), use natural order
+            sorted_items = list(value)
+        items = [self._format_value(item) for item in sorted_items]
+        return "{" + ", ".join(items) + "}"
+
+
+class _SelfieDecorator:
+    """Internal class to handle selfie decorator logic."""
+
+    def __init__(
+        self,
+        track_private: bool = True,
+        logger: Optional[Callable[[str], None]] = None,
+    ):
+        self.track_private = track_private
+        self.logger = logger
+
+    def wrap_container(self, self_obj: Any, name: str, value: Any) -> Any:
+        """Wrap dict/list/set values."""
+        if isinstance(value, dict):
+            return ObservableDict(value, parent=self_obj, attr_name=name)
+        elif isinstance(value, list):
+            return ObservableList(value, parent=self_obj, attr_name=name)
+        elif isinstance(value, set):
+            return ObservableSet(value, parent=self_obj, attr_name=name)
+        return value
+
+    def log_change(
+        self,
+        self_obj: Any,
+        cls_name: str,
+        name: str,
+        old_value: Any,
+        new_value: Any,
+        container_key: Optional[Union[str, int]] = None,
+        is_initial: bool = False,
+    ) -> None:
+        """Log attribute change."""
+        if not hasattr(self_obj, "_selfie_change_history"):
+            self_obj._selfie_change_history = {}
+
+        if name not in self_obj._selfie_change_history:
+            self_obj._selfie_change_history[name] = []
+
+        old_value_copy = copy.deepcopy(old_value) if old_value is not None else None
+        new_value_copy = copy.deepcopy(new_value) if new_value is not None else None
+
+        record = _ChangeRecord(
+            timestamp=datetime.now(),
+            attribute=name,
+            old_value=old_value_copy,
+            new_value=new_value_copy,
+            container_key=container_key,
+        )
+        self_obj._selfie_change_history[name].append(record)
+
+        attr_str = self._get_attribute_string(name, container_key)
+        log_func = self.logger if self.logger is not None else print
+
+        if is_initial:
+            formatted_val = record._format_value(new_value)
+            log_func(f"[{cls_name}] {attr_str} = {formatted_val} (initialized)")
+        elif new_value is None:
+            formatted_old = record._format_value(old_value)
+            log_func(f"[{cls_name}] {attr_str}: {formatted_old} -> deleted")
+        else:
+            formatted_old = record._format_value(old_value)
+            formatted_new = record._format_value(new_value)
+            log_func(f"[{cls_name}] {attr_str}: {formatted_old} -> {formatted_new}")
+
+    def _get_attribute_string(
+        self, name: str, container_key: Optional[Union[str, int]]
+    ) -> str:
+        """Get formatted attribute string."""
+        if container_key is not None:
+            if isinstance(container_key, int):
+                return f"{name}[{container_key}]"
+            else:
+                return f"{name}['{container_key}']"
+        return name
+
+    def log_container_change(
+        self,
+        self_obj: Any,
+        cls_name: str,
+        attr_name: str,
+        old_container_state: Any,
+        new_container_state: Any,
+    ) -> None:
+        """Log container change."""
+        old_copy = (
+            copy.deepcopy(old_container_state)
+            if old_container_state is not None
+            else None
+        )
+        new_copy = (
+            copy.deepcopy(new_container_state)
+            if new_container_state is not None
+            else None
+        )
+        self.log_change(self_obj, cls_name, attr_name, old_copy, new_copy)
+
+    def create_setattr(
+        self, cls: Type[T], original_setattr: Optional[Callable]
+    ) -> Callable:
+        """Create the __setattr__ method for the decorated class."""
+
+        def new_setattr(self_obj: Any, name: str, value: Any) -> None:
+            if name.startswith("_") and not self.track_private:
+                if original_setattr:
+                    original_setattr(self_obj, name, value)
+                else:
+                    object.__setattr__(self_obj, name, value)
+                return
+
+            if name.startswith("_selfie_"):
+                if original_setattr:
+                    original_setattr(self_obj, name, value)
+                else:
+                    object.__setattr__(self_obj, name, value)
+                return
+
+            has_old_value = hasattr(self_obj, name)
+            old_value = getattr(self_obj, name, None) if has_old_value else None
+
+            wrapped_value = self.wrap_container(self_obj, name, value)
+
+            if original_setattr:
+                original_setattr(self_obj, name, wrapped_value)
+            else:
+                object.__setattr__(self_obj, name, wrapped_value)
+
+            if not name.startswith("_selfie_"):
+                self.log_change(
+                    self_obj,
+                    cls.__name__,
+                    name,
+                    old_value,
+                    wrapped_value,
+                    is_initial=not has_old_value,
+                )
+
+        return new_setattr
+
+    def create_get_change_history(self) -> Callable:
+        """Create the get_change_history method for the decorated class."""
+
+        def get_change_history(
+            self_obj: Any,
+            attribute: Optional[str] = None,
+            format: Literal["flat", "attr"] = "flat",
+        ) -> Union[Dict[str, List[Dict[str, Any]]], List[Dict[str, Any]]]:
+            """Get change history for attributes."""
+            if format not in ("flat", "attr"):
+                raise ValueError(f"format must be 'flat' or 'attr', got {format!r}")
+
+            if not hasattr(self_obj, "_selfie_change_history"):
+                return self._get_empty_history(attribute, format)
+
+            if attribute is None:
+                return self._get_all_history(self_obj, format)
+            else:
+                return self._get_attribute_history(self_obj, attribute)
+
+        return get_change_history
+
+    def _get_empty_history(
+        self, attribute: Optional[str], format: Literal["flat", "attr"]
+    ) -> Union[Dict[str, List[Dict[str, Any]]], List[Dict[str, Any]]]:
+        """Return empty history when no change history exists."""
+        if attribute is None:
+            return [] if format == "flat" else {}
+        return []
+
+    def _get_all_history(
+        self, self_obj: Any, format: Literal["flat", "attr"]
+    ) -> Union[Dict[str, List[Dict[str, Any]]], List[Dict[str, Any]]]:
+        """Get history for all attributes."""
+        if format == "flat":
+            return self._get_all_history_flat(self_obj)
+        else:
+            return self._get_all_history_attr(self_obj)
+
+    def _get_all_history_flat(self, self_obj: Any) -> List[Dict[str, Any]]:
+        """Get flat format history for all attributes."""
+        result = []
+        for attr_name, records in self_obj._selfie_change_history.items():
+            for record in records:
+                result.append(self._format_record(record, attr_name))
+        return result
+
+    def _get_all_history_attr(self, self_obj: Any) -> Dict[str, List[Dict[str, Any]]]:
+        """Get attribute format history for all attributes."""
+        result = {}
+        for attr_name, records in self_obj._selfie_change_history.items():
+            result[attr_name] = [self._format_record(record) for record in records]
+        return result
+
+    def _get_attribute_history(
+        self, self_obj: Any, attribute: str
+    ) -> List[Dict[str, Any]]:
+        """Get history for a specific attribute."""
+        records = self_obj._selfie_change_history.get(attribute, [])
+        return [self._format_record(record) for record in records]
+
+    def _format_record(
+        self, record: _ChangeRecord, attr_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Format a single change record."""
+        formatted = {
+            "time": record.timestamp,
+            "from": record.old_value,
+            "to": record.new_value,
+        }
+        if attr_name is not None:
+            formatted["attr"] = attr_name
+        return formatted
 
 
 def _selfie(
@@ -321,174 +552,51 @@ def _selfie(
     """Class decorator for logging attribute changes."""
 
     def decorator(cls: Type[T]) -> Any:
+        decorator_instance = _SelfieDecorator(track_private, logger)
         original_setattr = getattr(cls, "__setattr__", None)
 
-        def _selfie_wrap_container(self, name: str, value: Any) -> Any:
-            """Wrap dict/list/set values."""
-            if isinstance(value, dict):
-                return ObservableDict(value, parent=self, attr_name=name)
-            elif isinstance(value, list):
-                return ObservableList(value, parent=self, attr_name=name)
-            elif isinstance(value, set):
-                return ObservableSet(value, parent=self, attr_name=name)
-            return value
+        # Create bound methods for the class
+        def wrap_container(self_obj: Any, name: str, value: Any) -> Any:
+            return decorator_instance.wrap_container(self_obj, name, value)
 
-        def _selfie_log_change(
-            self,
+        def log_change(
+            self_obj: Any,
             name: str,
             old_value: Any,
             new_value: Any,
             container_key: Optional[Union[str, int]] = None,
             is_initial: bool = False,
         ) -> None:
-            """Log attribute change."""
-            if not hasattr(self, "_selfie_change_history"):
-                self._selfie_change_history = {}
-
-            if name not in self._selfie_change_history:
-                self._selfie_change_history[name] = []
-
-            old_value_copy = copy.deepcopy(old_value) if old_value is not None else None
-            new_value_copy = copy.deepcopy(new_value) if new_value is not None else None
-
-            record = _ChangeRecord(
-                timestamp=datetime.now(),
-                attribute=name,
-                old_value=old_value_copy,
-                new_value=new_value_copy,
-                container_key=container_key,
+            decorator_instance.log_change(
+                self_obj,
+                cls.__name__,
+                name,
+                old_value,
+                new_value,
+                container_key,
+                is_initial,
             )
-            self._selfie_change_history[name].append(record)
 
-            if container_key is not None:
-                if isinstance(container_key, int):
-                    attr_str = f"{name}[{container_key}]"
-                else:
-                    attr_str = f"{name}['{container_key}']"
-            else:
-                attr_str = name
-
-            # Get the logger function, default to print
-            log_func = logger if logger is not None else print
-
-            if is_initial:
-                log_func(
-                    f"[{cls.__name__}] {attr_str} = {record._format_value(new_value)} (initialized)"
-                )
-            elif new_value is None:
-                log_func(
-                    f"[{cls.__name__}] {attr_str}: {record._format_value(old_value)} -> deleted"
-                )
-            else:
-                log_func(
-                    f"[{cls.__name__}] {attr_str}: {record._format_value(old_value)} -> {record._format_value(new_value)}"
-                )
-
-        def _selfie_log_container_change(
-            self,
+        def log_container_change(
+            self_obj: Any,
             attr_name: str,
             old_container_state: Any,
             new_container_state: Any,
         ) -> None:
-            """Log container change."""
-            old_copy = (
-                copy.deepcopy(old_container_state)
-                if old_container_state is not None
-                else None
+            decorator_instance.log_container_change(
+                self_obj,
+                cls.__name__,
+                attr_name,
+                old_container_state,
+                new_container_state,
             )
-            new_copy = (
-                copy.deepcopy(new_container_state)
-                if new_container_state is not None
-                else None
-            )
-            self._selfie_log_change(attr_name, old_copy, new_copy, container_key=None)
 
-        def new_setattr(self, name: str, value: Any) -> None:
-            if name.startswith("_") and not track_private:
-                if original_setattr:
-                    original_setattr(self, name, value)
-                else:
-                    object.__setattr__(self, name, value)
-                return
-
-            if name.startswith("_selfie_"):
-                if original_setattr:
-                    original_setattr(self, name, value)
-                else:
-                    object.__setattr__(self, name, value)
-                return
-
-            has_old_value = hasattr(self, name)
-            old_value = getattr(self, name, None) if has_old_value else None
-
-            wrapped_value = self._selfie_wrap_container(name, value)
-
-            if original_setattr:
-                original_setattr(self, name, wrapped_value)
-            else:
-                object.__setattr__(self, name, wrapped_value)
-
-            if not name.startswith("_selfie_"):
-                self._selfie_log_change(
-                    name, old_value, wrapped_value, is_initial=not has_old_value
-                )
-
-        def get_change_history(
-            self,
-            attribute: Optional[str] = None,
-            format: Literal["flat", "attr"] = "flat",
-        ) -> Union[Dict[str, List[Dict[str, Any]]], List[Dict[str, Any]]]:
-            """Get change history for attributes."""
-            if format not in ("flat", "attr"):
-                raise ValueError(f"format must be 'flat' or 'attr', got {format!r}")
-
-            if not hasattr(self, "_selfie_change_history"):
-                if attribute is None:
-                    return [] if format == "flat" else {}
-                return []
-
-            if attribute is None:
-                if format == "flat":
-                    result = []
-                    for attr_name, records in self._selfie_change_history.items():
-                        for record in records:
-                            result.append(
-                                {
-                                    "time": record.timestamp,
-                                    "attr": attr_name,
-                                    "from": record.old_value,
-                                    "to": record.new_value,
-                                }
-                            )
-                    return result
-                else:  # format == "attr"
-                    result = {}
-                    for attr_name, records in self._selfie_change_history.items():
-                        result[attr_name] = [
-                            {
-                                "time": record.timestamp,
-                                "from": record.old_value,
-                                "to": record.new_value,
-                            }
-                            for record in records
-                        ]
-                    return result
-            else:
-                records = self._selfie_change_history.get(attribute, [])
-                return [
-                    {
-                        "time": record.timestamp,
-                        "from": record.old_value,
-                        "to": record.new_value,
-                    }
-                    for record in records
-                ]
-
-        cls.__setattr__ = new_setattr
-        cls.get_change_history = get_change_history
-        cls._selfie_wrap_container = _selfie_wrap_container
-        cls._selfie_log_change = _selfie_log_change
-        cls._selfie_log_container_change = _selfie_log_container_change
+        # Set methods on the class
+        cls.__setattr__ = decorator_instance.create_setattr(cls, original_setattr)
+        cls.get_change_history = decorator_instance.create_get_change_history()
+        cls._selfie_wrap_container = wrap_container
+        cls._selfie_log_change = log_change
+        cls._selfie_log_container_change = log_container_change
 
         return cls
 
