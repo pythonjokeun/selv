@@ -24,22 +24,41 @@ class ObservableDict(dict):
     """Dictionary that notifies parent of changes."""
 
     def __init__(self, *args, parent=None, attr_name=None, **kwargs):
-        self._parent = None
-        self._attr_name = None
-        self._initializing = True
-        super().__init__(*args, **kwargs)
         self._parent = parent
         self._attr_name = attr_name
+        self._initializing = True
+        super().__init__()
+        # Process initial items and wrap them
+        if len(args) > 0:
+            if len(args) > 1:
+                raise TypeError("expected at most 1 argument, got %d" % len(args))
+            # Extract first argument safely
+            first_arg = args[0]
+            for key, value in dict(first_arg).items():
+                self[key] = value
+        for key, value in kwargs.items():
+            self[key] = value
         self._initializing = False
 
     def __setitem__(self, key, value):
         old_container_state = self.copy() if self._parent else None
-        super().__setitem__(key, value)
+        wrapped_value = self._wrap_value(value)
+        super().__setitem__(key, wrapped_value)
         if self._parent and self._attr_name and not self._initializing:
             new_container_state = self.copy()
             self._parent._selfie_log_container_change(
                 self._attr_name, old_container_state, new_container_state
             )
+
+    def _wrap_value(self, value):
+        """Wrap container values for observation."""
+        if isinstance(value, dict):
+            return ObservableDict(value, parent=self._parent, attr_name=self._attr_name)
+        elif isinstance(value, list):
+            return ObservableList(value, parent=self._parent, attr_name=self._attr_name)
+        elif isinstance(value, set):
+            return ObservableSet(value, parent=self._parent, attr_name=self._attr_name)
+        return value
 
     def __delitem__(self, key):
         old_container_state = self.copy() if self._parent else None
@@ -55,22 +74,37 @@ class ObservableList(list):
     """List that notifies parent of changes."""
 
     def __init__(self, *args, parent=None, attr_name=None, **kwargs):
-        self._parent = None
-        self._attr_name = None
-        self._initializing = True
-        super().__init__(*args, **kwargs)
         self._parent = parent
         self._attr_name = attr_name
+        self._initializing = True
+        super().__init__()
+        # Process initial items and wrap them
+        if len(args) > 0:
+            # Extract first argument safely
+            first_arg = args[0]
+            for value in first_arg:
+                self.append(value)
         self._initializing = False
 
     def __setitem__(self, key, value):
         old_container_state = self.copy() if self._parent else None
-        super().__setitem__(key, value)
+        wrapped_value = self._wrap_value(value)
+        super().__setitem__(key, wrapped_value)
         if self._parent and self._attr_name and not self._initializing:
             new_container_state = self.copy()
             self._parent._selfie_log_container_change(
                 self._attr_name, old_container_state, new_container_state
             )
+
+    def _wrap_value(self, value):
+        """Wrap container values for observation."""
+        if isinstance(value, dict):
+            return ObservableDict(value, parent=self._parent, attr_name=self._attr_name)
+        elif isinstance(value, list):
+            return ObservableList(value, parent=self._parent, attr_name=self._attr_name)
+        elif isinstance(value, set):
+            return ObservableSet(value, parent=self._parent, attr_name=self._attr_name)
+        return value
 
     def __delitem__(self, key):
         old_container_state = self.copy() if self._parent else None
@@ -83,7 +117,8 @@ class ObservableList(list):
 
     def append(self, value):
         old_container_state = self.copy() if self._parent else None
-        super().append(value)
+        wrapped_value = self._wrap_value(value)
+        super().append(wrapped_value)
         if self._parent and self._attr_name and not self._initializing:
             new_container_state = self.copy()
             self._parent._selfie_log_container_change(
@@ -99,6 +134,117 @@ class ObservableList(list):
                 self._attr_name, old_container_state, new_container_state
             )
         return result
+
+
+class ObservableSet(set):
+    """Set that notifies parent of changes."""
+
+    def __init__(self, *args, parent=None, attr_name=None, **kwargs):
+        self._parent = parent
+        self._attr_name = attr_name
+        self._initializing = True
+        super().__init__()
+        # Process initial items and wrap them
+        if len(args) > 0:
+            # Extract first argument safely
+            first_arg = args[0]
+            for value in first_arg:
+                self.add(value)
+        self._initializing = False
+
+    def add(self, element):
+        old_container_state = self.copy() if self._parent else None
+        wrapped_element = self._wrap_value(element)
+        super().add(wrapped_element)
+        if self._parent and self._attr_name and not self._initializing:
+            new_container_state = self.copy()
+            self._parent._selfie_log_container_change(
+                self._attr_name, old_container_state, new_container_state
+            )
+
+    def _wrap_value(self, value):
+        """Wrap container values for observation."""
+        if isinstance(value, dict):
+            return ObservableDict(value, parent=self._parent, attr_name=self._attr_name)
+        elif isinstance(value, list):
+            return ObservableList(value, parent=self._parent, attr_name=self._attr_name)
+        elif isinstance(value, set):
+            return ObservableSet(value, parent=self._parent, attr_name=self._attr_name)
+        return value
+
+    def remove(self, element):
+        old_container_state = self.copy() if self._parent else None
+        super().remove(element)
+        if self._parent and self._attr_name and not self._initializing:
+            new_container_state = self.copy()
+            self._parent._selfie_log_container_change(
+                self._attr_name, old_container_state, new_container_state
+            )
+
+    def discard(self, element):
+        old_container_state = self.copy() if self._parent else None
+        super().discard(element)
+        if self._parent and self._attr_name and not self._initializing:
+            new_container_state = self.copy()
+            self._parent._selfie_log_container_change(
+                self._attr_name, old_container_state, new_container_state
+            )
+
+    def pop(self):
+        old_container_state = self.copy() if self._parent else None
+        result = super().pop()
+        if self._parent and self._attr_name and not self._initializing:
+            new_container_state = self.copy()
+            self._parent._selfie_log_container_change(
+                self._attr_name, old_container_state, new_container_state
+            )
+        return result
+
+    def clear(self):
+        old_container_state = self.copy() if self._parent else None
+        super().clear()
+        if self._parent and self._attr_name and not self._initializing:
+            new_container_state = self.copy()
+            self._parent._selfie_log_container_change(
+                self._attr_name, old_container_state, new_container_state
+            )
+
+    def update(self, *others):
+        old_container_state = self.copy() if self._parent else None
+        # Update with original values, wrapping happens in add() method
+        super().update(*others)
+        if self._parent and self._attr_name and not self._initializing:
+            new_container_state = self.copy()
+            self._parent._selfie_log_container_change(
+                self._attr_name, old_container_state, new_container_state
+            )
+
+    def intersection_update(self, *others):
+        old_container_state = self.copy() if self._parent else None
+        super().intersection_update(*others)
+        if self._parent and self._attr_name and not self._initializing:
+            new_container_state = self.copy()
+            self._parent._selfie_log_container_change(
+                self._attr_name, old_container_state, new_container_state
+            )
+
+    def difference_update(self, *others):
+        old_container_state = self.copy() if self._parent else None
+        super().difference_update(*others)
+        if self._parent and self._attr_name and not self._initializing:
+            new_container_state = self.copy()
+            self._parent._selfie_log_container_change(
+                self._attr_name, old_container_state, new_container_state
+            )
+
+    def symmetric_difference_update(self, other):
+        old_container_state = self.copy() if self._parent else None
+        super().symmetric_difference_update(other)
+        if self._parent and self._attr_name and not self._initializing:
+            new_container_state = self.copy()
+            self._parent._selfie_log_container_change(
+                self._attr_name, old_container_state, new_container_state
+            )
 
 
 class _ChangeRecord:
@@ -157,7 +303,13 @@ class _ChangeRecord:
             items = [self._format_value(item) for item in value]
             return "(" + ", ".join(items) + ")"
         elif isinstance(value, set):
-            items = [self._format_value(item) for item in sorted(value)]
+            try:
+                # Try to sort for consistent output
+                sorted_items = sorted(value)
+            except TypeError:
+                # If sorting fails (mixed types), use natural order
+                sorted_items = list(value)
+            items = [self._format_value(item) for item in sorted_items]
             return "{" + ", ".join(items) + "}"
         else:
             return f"{type(value).__name__} instance"
@@ -172,11 +324,13 @@ def _selfie(
         original_setattr = getattr(cls, "__setattr__", None)
 
         def _selfie_wrap_container(self, name: str, value: Any) -> Any:
-            """Wrap dict/list values."""
+            """Wrap dict/list/set values."""
             if isinstance(value, dict):
                 return ObservableDict(value, parent=self, attr_name=name)
             elif isinstance(value, list):
                 return ObservableList(value, parent=self, attr_name=name)
+            elif isinstance(value, set):
+                return ObservableSet(value, parent=self, attr_name=name)
             return value
 
         def _selfie_log_change(
