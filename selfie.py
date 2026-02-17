@@ -6,6 +6,7 @@ import copy
 from datetime import datetime
 from typing import (
     Any,
+    Callable,
     Dict,
     List,
     Literal,
@@ -25,14 +26,16 @@ class ObservableDict(dict):
     def __init__(self, *args, parent=None, attr_name=None, **kwargs):
         self._parent = None
         self._attr_name = None
+        self._initializing = True
         super().__init__(*args, **kwargs)
         self._parent = parent
         self._attr_name = attr_name
+        self._initializing = False
 
     def __setitem__(self, key, value):
         old_container_state = self.copy() if self._parent else None
         super().__setitem__(key, value)
-        if self._parent and self._attr_name:
+        if self._parent and self._attr_name and not self._initializing:
             new_container_state = self.copy()
             self._parent._selfie_log_container_change(
                 self._attr_name, old_container_state, new_container_state
@@ -41,7 +44,7 @@ class ObservableDict(dict):
     def __delitem__(self, key):
         old_container_state = self.copy() if self._parent else None
         super().__delitem__(key)
-        if self._parent and self._attr_name:
+        if self._parent and self._attr_name and not self._initializing:
             new_container_state = self.copy()
             self._parent._selfie_log_container_change(
                 self._attr_name, old_container_state, new_container_state
@@ -54,14 +57,16 @@ class ObservableList(list):
     def __init__(self, *args, parent=None, attr_name=None, **kwargs):
         self._parent = None
         self._attr_name = None
+        self._initializing = True
         super().__init__(*args, **kwargs)
         self._parent = parent
         self._attr_name = attr_name
+        self._initializing = False
 
     def __setitem__(self, key, value):
         old_container_state = self.copy() if self._parent else None
         super().__setitem__(key, value)
-        if self._parent and self._attr_name:
+        if self._parent and self._attr_name and not self._initializing:
             new_container_state = self.copy()
             self._parent._selfie_log_container_change(
                 self._attr_name, old_container_state, new_container_state
@@ -70,7 +75,7 @@ class ObservableList(list):
     def __delitem__(self, key):
         old_container_state = self.copy() if self._parent else None
         super().__delitem__(key)
-        if self._parent and self._attr_name:
+        if self._parent and self._attr_name and not self._initializing:
             new_container_state = self.copy()
             self._parent._selfie_log_container_change(
                 self._attr_name, old_container_state, new_container_state
@@ -79,7 +84,7 @@ class ObservableList(list):
     def append(self, value):
         old_container_state = self.copy() if self._parent else None
         super().append(value)
-        if self._parent and self._attr_name:
+        if self._parent and self._attr_name and not self._initializing:
             new_container_state = self.copy()
             self._parent._selfie_log_container_change(
                 self._attr_name, old_container_state, new_container_state
@@ -88,7 +93,7 @@ class ObservableList(list):
     def pop(self, index: SupportsIndex = -1):
         old_container_state = self.copy() if self._parent else None
         result = super().pop(index)
-        if self._parent and self._attr_name:
+        if self._parent and self._attr_name and not self._initializing:
             new_container_state = self.copy()
             self._parent._selfie_log_container_change(
                 self._attr_name, old_container_state, new_container_state
@@ -114,8 +119,6 @@ class _ChangeRecord:
         self.container_key = container_key
 
     def __repr__(self) -> str:
-        time_str = self.timestamp.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-
         if self.container_key is not None:
             if isinstance(self.container_key, int):
                 attr_str = f"{self.attribute}[{self.container_key}]"
@@ -125,11 +128,11 @@ class _ChangeRecord:
             attr_str = self.attribute
 
         if self.old_value is None and self.new_value is not None:
-            return f"[{time_str}] {attr_str} = {self._format_value(self.new_value)}"
+            return f"{attr_str} = {self._format_value(self.new_value)}"
         elif self.new_value is None:
-            return f"[{time_str}] {attr_str}: {self._format_value(self.old_value)} -> deleted"
+            return f"{attr_str}: {self._format_value(self.old_value)} -> deleted"
         else:
-            return f"[{time_str}] {attr_str}: {self._format_value(self.old_value)} -> {self._format_value(self.new_value)}"
+            return f"{attr_str}: {self._format_value(self.old_value)} -> {self._format_value(self.new_value)}"
 
     def _format_value(self, value: Any) -> str:
         """Format value for display."""
@@ -160,7 +163,9 @@ class _ChangeRecord:
             return f"{type(value).__name__} instance"
 
 
-def _selfie(track_private: bool = True) -> Any:
+def _selfie(
+    track_private: bool = True, logger: Optional[Callable[[str], None]] = None
+) -> Any:
     """Class decorator for logging attribute changes."""
 
     def decorator(cls: Type[T]) -> Any:
@@ -201,8 +206,6 @@ def _selfie(track_private: bool = True) -> Any:
             )
             self._selfie_change_history[name].append(record)
 
-            time_str = record.timestamp.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-
             if container_key is not None:
                 if isinstance(container_key, int):
                     attr_str = f"{name}[{container_key}]"
@@ -211,17 +214,20 @@ def _selfie(track_private: bool = True) -> Any:
             else:
                 attr_str = name
 
+            # Get the logger function, default to print
+            log_func = logger if logger is not None else print
+
             if is_initial:
-                print(
-                    f"[{time_str}] [{cls.__name__}] {attr_str} = {record._format_value(new_value)} (initialized)"
+                log_func(
+                    f"[{cls.__name__}] {attr_str} = {record._format_value(new_value)} (initialized)"
                 )
             elif new_value is None:
-                print(
-                    f"[{time_str}] [{cls.__name__}] {attr_str}: {record._format_value(old_value)} -> deleted"
+                log_func(
+                    f"[{cls.__name__}] {attr_str}: {record._format_value(old_value)} -> deleted"
                 )
             else:
-                print(
-                    f"[{time_str}] [{cls.__name__}] {attr_str}: {record._format_value(old_value)} -> {record._format_value(new_value)}"
+                log_func(
+                    f"[{cls.__name__}] {attr_str}: {record._format_value(old_value)} -> {record._format_value(new_value)}"
                 )
 
         def _selfie_log_container_change(
