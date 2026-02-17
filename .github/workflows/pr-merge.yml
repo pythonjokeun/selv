@@ -5,9 +5,28 @@ on:
     branches: [main]
 
 jobs:
+  version-check:
+    name: Check if version is new
+    runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.version_check.outputs.current_version_exists == 'false' }}
+      package_version: ${{ steps.version_check.outputs.package_version }}
+      package_name: ${{ steps.version_check.outputs.package_name }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check if version exists on PyPI
+        id: version_check
+        uses: MathieuMoalic/action-python-package-new-version@v3
+        with:
+          index: pypi.org
+
   publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest
+    needs: version-check
+    if: ${{ needs.version-check.outputs.should_publish }}
     permissions:
       id-token: write
       contents: read
