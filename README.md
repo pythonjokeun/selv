@@ -76,6 +76,7 @@ print(value_changes)
 
 # View changes grouped by attribute
 grouped = counter.view_changelog(format="attr")
+print(grouped)
 # {
 #   'value': [
 #     {'time': datetime, 'from': None, 'to': 0},
